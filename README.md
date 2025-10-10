@@ -1,6 +1,6 @@
 # phyload
 
-Utilities for loading multi-physics, spatio-temporal trajectory data. The format used is the one used for the PHYGEN library. 
+Utilities for loading multi-physics, spatio-temporal trajectory data exported by [PHYGEN](https://github.com/itsakk/PHYGEN). 
 `phyload` discovers tensor fields, exposes them
 through a flexible PyTorch `Dataset`, and provides ready-to-use `DataLoader`
 factories that respect heterogeneous grids, windowing, and metadata.
@@ -119,19 +119,3 @@ configuration (`loaders` section) to build samplers for all participating datase
 
 Channel metadata remains accessible through each sub-dataset, so downstream models
 can map component names consistently across physics domains.
-
-## Development
-
-- Python 3.10+
-- Install dev dependencies: `pip install -r requirements-dev.txt` (if present)
-- Run formatting / linting with `ruff` or `black`
-- Execute tests (when available) with `pytest`
-
-for batch in train_loader:
-    # batch contains a mapping of alias -> mini-batch
-    pass
-```
-
-Switch `mode` between `"homogeneous"` (aligned channel/shape) and `"heterogeneous"`
-depending on how you wish to batch the datasets. `PaddedTrajectoryDataset` keeps
-per-dataset metadata intact while aligning tensor shapes.
