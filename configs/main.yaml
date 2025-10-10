@@ -1,7 +1,6 @@
 # Unified configuration template for datasets and loaders
 
 data:
-  # root: /lustre/fsn1/projects/rech/ywo/urv67cz/data
   root: /lustre/fsmisc/dataset/the_well/datasets
   dataset_name: active_matter
   splits: [train, val, test]
