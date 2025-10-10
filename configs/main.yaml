@@ -1,0 +1,35 @@
+# Unified configuration template for datasets and loaders
+
+data:
+  # root: /lustre/fsn1/projects/rech/ywo/urv67cz/data
+  root: /lustre/fsmisc/dataset/the_well/datasets
+  dataset_name: active_matter
+  splits: [train, val, test]
+  use_normalization: true
+  normalization_type: zscore  # or 'rms'
+  time_range: [null, null]   # [start, stop] with optional negatives
+  time_stride: 1
+  dt: null                   # temporal subsampling factor
+  dx: 1                   # spatial subsampling factor(s)
+  num_steps: null            # window length
+  window_stride: null        # window shift
+  return_ic: false
+  return_bc: false
+  return_params: true
+  ntrain: null
+  nval: null
+  ntest: null
+
+loaders:
+  batch_size: 1
+  val_batch_size: null
+  test_batch_size: null
+  shuffle_train: true
+  shuffle_val: false
+  shuffle_test: false
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  drop_last: false
+  persistent_workers: false
+  multi_gpu: false

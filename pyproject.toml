@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phyload"
+version = "0.1.0"
+description = "Flexible loaders for spatio-temporal physics datasets"
+authors = [{name = "Armand"}]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.0.0",
+    "h5py>=3.8",
+    "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://example.com/phyload"
