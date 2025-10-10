@@ -1,7 +1,7 @@
 # phyload
 
-Utilities for loading multi-physics, spatio-temporal trajectory data exported in
-The Well / PhyBench HDF5 layout. `phyload` discovers tensor fields, exposes them
+Utilities for loading multi-physics, spatio-temporal trajectory data. The format used is the one used for the PHYGEN library. 
+`phyload` discovers tensor fields, exposes them
 through a flexible PyTorch `Dataset`, and provides ready-to-use `DataLoader`
 factories that respect heterogeneous grids, windowing, and metadata.
 
