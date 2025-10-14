@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Dict, List, MutableSequence, Optional, Sequence, Tuple, Union
 
 import h5py
@@ -758,7 +759,7 @@ class TrajectoryDataset(Dataset):
 
 def _init_multi_dataset_collection(cfg: Dict[str, object]) -> MultiDatasetCollection:
     dataset_entries = cfg.get("datasets")
-    if not isinstance(dataset_entries, dict) or not dataset_entries:
+    if not isinstance(dataset_entries, Mapping) or not dataset_entries:
         raise ValueError("'datasets' must be a non-empty mapping when combining datasets.")
 
     fusion_mode = cfg.get("fusion_mode", "homogeneous")
@@ -772,10 +773,10 @@ def _init_multi_dataset_collection(cfg: Dict[str, object]) -> MultiDatasetCollec
 
     per_split_alias: Dict[str, Dict[str, TrajectoryDataset]] = defaultdict(dict)
     for alias, alias_cfg in dataset_entries.items():
-        if not isinstance(alias_cfg, dict):
+        if not isinstance(alias_cfg, Mapping):
             raise TypeError(f"Configuration for dataset '{alias}' must be a mapping.")
         merged: Dict[str, object] = dict(global_defaults)
-        merged.update(alias_cfg)
+        merged.update(dict(alias_cfg))
         alias_datasets = init_datasets(merged)
         for split, dataset in alias_datasets.items():
             per_split_alias[split][alias] = dataset
@@ -787,7 +788,7 @@ def _init_multi_dataset_collection(cfg: Dict[str, object]) -> MultiDatasetCollec
 
 
 def init_datasets(
-    config: Union[Path, str, Dict[str, object]],
+    config: Union[Path, str, Mapping],
     **overrides,
 ) -> Union[Dict[str, TrajectoryDataset], MultiDatasetCollection]:
     """Instantiate datasets for the requested splits.
@@ -800,7 +801,7 @@ def init_datasets(
     if isinstance(config, (str, Path)):
         cfg: Dict[str, object] = {"root": config}
         cfg.update(overrides)
-    elif isinstance(config, dict):
+    elif isinstance(config, Mapping):
         cfg = dict(config)
         cfg.update(overrides)
     else:
