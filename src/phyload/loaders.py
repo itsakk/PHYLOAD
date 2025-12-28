@@ -12,7 +12,7 @@ try:  # optional import for distributed training
 except Exception:  # pragma: no cover
     DistributedSampler = None  # type: ignore
 
-from .multi import HomogeneousCombinedLoader, MultiDatasetCollection
+from .multi import MultiDatasetCollection, CombinedLoader, COMBINED_LOADERS
 
 __all__ = ["init_dataloaders"]
 
@@ -47,7 +47,7 @@ def init_dataloaders(
         raise TypeError("config must be a mapping or None.")
 
     if isinstance(datasets, MultiDatasetCollection):
-        if datasets.mode == "homogeneous":
+        if datasets.mode in COMBINED_LOADERS.keys():
             return _build_homogeneous_loaders(datasets, raw_cfg)
         datasets = {split: datasets[split] for split in datasets}
 
@@ -126,14 +126,14 @@ def init_dataloaders(
 def _build_homogeneous_loaders(
     collection: MultiDatasetCollection,
     config: Mapping[str, object],
-) -> Tuple[Optional[HomogeneousCombinedLoader], Optional[HomogeneousCombinedLoader], Optional[HomogeneousCombinedLoader]]:
+) -> Tuple[Optional[CombinedLoader], Optional[CombinedLoader], Optional[CombinedLoader]]:
     config_mapping = dict(config)
     alias_to_loaders: Dict[str, Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]] = {}
     for alias, split_map in collection.per_alias_datasets().items():
         loaders = init_dataloaders(split_map, config_mapping)
         alias_to_loaders[alias] = loaders
 
-    def _gather(index: int, shuffle_flag: bool) -> Optional[HomogeneousCombinedLoader]:
+    def _gather(index: int, shuffle_flag: bool) -> Optional[CombinedLoader]:
         loaders = {
             alias: loader_tuple[index]
             for alias, loader_tuple in alias_to_loaders.items()
@@ -141,7 +141,7 @@ def _build_homogeneous_loaders(
         }
         if not loaders:
             return None
-        return HomogeneousCombinedLoader(loaders, shuffle=shuffle_flag)
+        return COMBINED_LOADERS.get(collection.mode, "uniform")(loaders, shuffle=shuffle_flag)
 
     train_loader = _gather(0, bool(config_mapping.get("shuffle_train", True)))
     val_loader = _gather(1, bool(config_mapping.get("shuffle_val", False)))

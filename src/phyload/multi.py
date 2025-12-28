@@ -217,8 +217,8 @@ class MultiDatasetCollection(Mapping[str, Dataset]):
         pad_value: float = 0.0,
     ) -> None:
         mode = mode.lower()
-        if mode not in {"homogeneous", "mixed"}:
-            raise ValueError("mode must be 'homogeneous' or 'mixed'")
+        if mode not in ["mixed"] + list(COMBINED_LOADERS.keys()):
+            raise ValueError(f"mode must be one of '{'\', \''.join(["mixed"] + list(COMBINED_LOADERS.keys()))}', not '{mode}'")
         self.mode = mode
         self.pad_value = float(pad_value)
         self._alias_map = {
@@ -253,17 +253,12 @@ class MultiDatasetCollection(Mapping[str, Dataset]):
         return grouped
 
 
-class HomogeneousCombinedLoader:
-    """Round-robin loader combining batches from multiple loaders."""
-
+class CombinedLoader:
     def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
         self.loaders = {alias: loader for alias, loader in loaders.items() if loader is not None}
         self.shuffle = bool(shuffle)
         if not self.loaders:
-            raise ValueError("At least one loader is required for HomogeneousCombinedLoader.")
-
-    def __len__(self) -> int:
-        return sum(len(loader) for loader in self.loaders.values())
+            raise ValueError("At least one loader is required for CombinedLoader.")
 
     def set_epoch(self, epoch: int) -> None:
         for loader in self.loaders.values():
@@ -271,19 +266,49 @@ class HomogeneousCombinedLoader:
             if sampler is not None and hasattr(sampler, "set_epoch"):
                 sampler.set_epoch(epoch)
 
+
+class HomogeneousCombinedLoader(CombinedLoader):
+    """loads each chunk from each dataset uniformly through a weighted probability depending on the number of chunks in each dataset
+
+    Args:
+        loaders (Mapping[str, torch.utils.data.DataLoader]): list of the dataloaders to combine
+        shuffle (bool, optional): if the samples should be shuffled (is irrelevant, doesn't have a deterministic behaviour implemented yet). Defaults to True.
+    """
+
+    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
+        super().__init__(loaders, shuffle)
+        self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
+        # if self.shuffle:
+        #     for key, val in self.lengths.items():
+        #         print(f"{key}: {val}")
+        self.total_batches = sum(self.lengths.values())
+
+    def __len__(self):
+        return self.total_batches
+
     def __iter__(self):
-        entries = [(alias, iter(loader)) for alias, loader in self.loaders.items()]
-        if self.shuffle:
-            random.shuffle(entries)
-        active = deque(entries)
-        while active:
-            alias, iterator = active.popleft()
+        entries = {alias: iter(loader) for alias, loader in self.loaders.items()}
+        remaining = self.lengths.copy()
+
+        while remaining:
+            # Sample loader alias proportionally to remaining batch counts
+            aliases = list(remaining.keys())
+            weights = [remaining[a] for a in aliases]
+            alias = random.choices(aliases, weights)[0]
+
             try:
-                batch = next(iterator)
+                batch = next(entries[alias])
             except StopIteration:
+                # shouldn't normally happen unless DataLoader behaves oddly
+                del remaining[alias]
                 continue
+
+            # Decrease remaining count
+            remaining[alias] -= 1
+            if remaining[alias] == 0:
+                del remaining[alias]
+
             yield annotate_batch(batch, alias)
-            active.append((alias, iterator))
 
 
 def annotate_batch(batch, alias: str):
@@ -292,3 +317,8 @@ def annotate_batch(batch, alias: str):
         annotated.setdefault("dataset", alias)
         return annotated
     return batch, alias
+
+
+COMBINED_LOADERS = dict(
+    homogeneous=HomogeneousCombinedLoader,
+)
