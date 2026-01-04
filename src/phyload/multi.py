@@ -217,8 +217,9 @@ class MultiDatasetCollection(Mapping[str, Dataset]):
         pad_value: float = 0.0,
     ) -> None:
         mode = mode.lower()
-        if mode not in ["mixed"] + list(COMBINED_LOADERS.keys()):
-            raise ValueError(f"mode must be one of '{'\', \''.join(["mixed"] + list(COMBINED_LOADERS.keys()))}', not '{mode}'")
+        allowed = ["mixed", *COMBINED_LOADERS.keys()]
+        if mode not in allowed:
+            raise ValueError(f"mode must be one of {allowed}, not {mode!r}")
         self.mode = mode
         self.pad_value = float(pad_value)
         self._alias_map = {
