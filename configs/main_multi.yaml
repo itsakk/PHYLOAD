@@ -51,3 +51,7 @@ loaders:
   drop_last: false
   persistent_workers: false
   multi_gpu: false
+  # Set to true to force all ranks to pick the same dataset at each step.
+  sync_dataset_per_step: false
+  # Optional seed controlling dataset selection order when using the combined loader.
+  dataset_choice_seed: 0

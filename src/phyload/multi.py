@@ -6,7 +6,7 @@ import itertools
 import random
 from bisect import bisect_right
 from collections import defaultdict, deque
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -269,40 +269,117 @@ class CombinedLoader:
 
 
 class HomogeneousCombinedLoader(CombinedLoader):
-    """loads each chunk from each dataset uniformly through a weighted probability depending on the number of chunks in each dataset
+    """Loads each chunk from each dataset uniformly through a weighted probability depending on the number of
+    chunks in each dataset.
+
+    Optionally, in distributed (DDP / multi-node) setups, you can force that *all ranks pick the same dataset
+    at each global step* (so every rank's batch for that step comes from the same dataset). This is useful if
+    you want dataset-homogeneous optimizer behavior.
 
     Args:
-        loaders (Mapping[str, torch.utils.data.DataLoader]): list of the dataloaders to combine
-        shuffle (bool, optional): if the samples should be shuffled (is irrelevant, doesn't have a deterministic behaviour implemented yet). Defaults to True.
+        loaders: map alias -> dataloader
+        shuffle: kept for compatibility (sampling is randomized anyway)
+        sync_dataset_per_step: if True and torch.distributed is initialized, rank0 samples the dataset alias
+            and broadcasts it so all ranks use the same dataset for that step.
+        seed: base seed for rank0 sampling (combined with epoch via set_epoch); only used for dataset-choice RNG.
     """
 
-    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
+    def __init__(
+        self,
+        loaders: Mapping[str, torch.utils.data.DataLoader],
+        shuffle: bool = True,
+        *,
+        sync_dataset_per_step: bool = False,
+        seed: int = 0,
+    ) -> None:
         super().__init__(loaders, shuffle)
         self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
-        # if self.shuffle:
-        #     for key, val in self.lengths.items():
-        #         print(f"{key}: {val}")
         self.total_batches = sum(self.lengths.values())
+
+        # --- minimal additions ---
+        self.sync_dataset_per_step = bool(sync_dataset_per_step)
+        self.seed = int(seed)
+        self.epoch = 0
+        # -------------------------
+
+    def set_epoch(self, epoch: int) -> None:
+        super().set_epoch(epoch)
+        self.epoch = int(epoch)
 
     def __len__(self):
         return self.total_batches
 
     def __iter__(self):
+        import torch.distributed as dist  # local import to avoid forcing dist dependency
+
+        dist_on = (
+            self.sync_dataset_per_step
+            and dist.is_available()
+            and dist.is_initialized()
+        )
+        rank = dist.get_rank() if dist_on else 0
+        # NCCL requires CUDA tensors for collectives; use CPU for gloo/others.
+        dist_device = None
+        if dist_on:
+            try:
+                backend = dist.get_backend()
+            except Exception:
+                backend = None
+            if backend == "nccl":
+                dist_device = torch.device("cuda", torch.cuda.current_device())
+            else:
+                dist_device = torch.device("cpu")
+
+        # rank0 RNG for choosing which dataset to draw from at each step
+        rng = random.Random(self.seed + 1000003 * self.epoch)
+
         entries = {alias: iter(loader) for alias, loader in self.loaders.items()}
         remaining = self.lengths.copy()
 
-        while remaining:
-            # Sample loader alias proportionally to remaining batch counts
-            aliases = list(remaining.keys())
-            weights = [remaining[a] for a in aliases]
-            alias = random.choices(aliases, weights)[0]
+        # Stable alias <-> index mapping for broadcast
+        all_aliases_sorted = sorted(self.loaders.keys())
+        alias_to_idx = {a: i for i, a in enumerate(all_aliases_sorted)}
+        idx_to_alias = {i: a for a, i in alias_to_idx.items()}
 
+        while remaining:
+            # ---- choose alias (optionally synchronized across ranks) ----
+            if dist_on:
+                if rank == 0:
+                    aliases = list(remaining.keys())
+                    weights = [remaining[a] for a in aliases]
+                    chosen_alias = rng.choices(aliases, weights)[0]
+                    chosen_idx = alias_to_idx[chosen_alias]
+                    chosen_idx_t = torch.tensor([chosen_idx], dtype=torch.int64, device=dist_device)
+                else:
+                    chosen_idx_t = torch.tensor([0], dtype=torch.int64, device=dist_device)
+
+                dist.broadcast(chosen_idx_t, src=0)
+                alias = idx_to_alias[int(chosen_idx_t.item())]
+            else:
+                aliases = list(remaining.keys())
+                weights = [remaining[a] for a in aliases]
+                alias = rng.choices(aliases, weights)[0]
+            # -----------------------------------------------------------
+
+            # Try to get next batch for that alias
+            got_stop = False
+            batch = None
             try:
                 batch = next(entries[alias])
             except StopIteration:
-                # shouldn't normally happen unless DataLoader behaves oddly
-                del remaining[alias]
-                continue
+                got_stop = True
+
+            # If any rank hit StopIteration for that alias, drop that alias everywhere and resample
+            if dist_on:
+                flag = torch.tensor([1 if got_stop else 0], dtype=torch.int64, device=dist_device)
+                dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+                if int(flag.item()) != 0:
+                    remaining.pop(alias, None)
+                    continue
+            else:
+                if got_stop:
+                    remaining.pop(alias, None)
+                    continue
 
             # Decrease remaining count
             remaining[alias] -= 1

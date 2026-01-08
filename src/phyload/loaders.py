@@ -128,6 +128,16 @@ def _build_homogeneous_loaders(
     config: Mapping[str, object],
 ) -> Tuple[Optional[CombinedLoader], Optional[CombinedLoader], Optional[CombinedLoader]]:
     config_mapping = dict(config)
+    # Extract options that belong to the CombinedLoader itself so they don't leak into torch DataLoader kwargs.
+    combined_loader_kwargs = {}
+    for cfg_key, target_key in (
+        ("sync_dataset_per_step", "sync_dataset_per_step"),
+        ("dataset_choice_seed", "seed"),
+        ("combined_seed", "seed"),
+    ):
+        if cfg_key in config_mapping:
+            combined_loader_kwargs[target_key] = config_mapping.pop(cfg_key)
+
     alias_to_loaders: Dict[str, Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]] = {}
     for alias, split_map in collection.per_alias_datasets().items():
         loaders = init_dataloaders(split_map, config_mapping)
@@ -141,7 +151,11 @@ def _build_homogeneous_loaders(
         }
         if not loaders:
             return None
-        return COMBINED_LOADERS.get(collection.mode, "uniform")(loaders, shuffle=shuffle_flag)
+        return COMBINED_LOADERS.get(collection.mode, "uniform")(
+            loaders,
+            shuffle=shuffle_flag,
+            **combined_loader_kwargs,
+        )
 
     train_loader = _gather(0, bool(config_mapping.get("shuffle_train", True)))
     val_loader = _gather(1, bool(config_mapping.get("shuffle_val", False)))

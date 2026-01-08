@@ -32,3 +32,6 @@ loaders:
   drop_last: false
   persistent_workers: false
   multi_gpu: false
+  # Combined-loader options (homogeneous multi-dataset runs)
+  sync_dataset_per_step: false
+  dataset_choice_seed: 0

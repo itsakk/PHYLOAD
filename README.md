@@ -114,8 +114,13 @@ Supported combination modes:
   `MultiDatasetCollection` keeps them separate; you can iterate per-alias batches
   or wrap them with `PaddedTrajectoryDataset` if you need aligned shapes.
 
-Choose the mode via the `mode` key in `main_multi.yaml`, and use the same loader
+Choose the mode via the `fusion_mode` key in `main_multi.yaml`, and use the same loader
 configuration (`loaders` section) to build samplers for all participating datasets.
+
+- **Synchronized dataset choice (DDP)**: when using the homogeneous fusion mode,
+  set `loaders.sync_dataset_per_step: true` (and optionally `loaders.dataset_choice_seed`)
+  to force every distributed rank to draw the batch for a given step from the same
+  dataset. This keeps optimizer updates dataset-homogeneous even across GPUs/nodes.
 
 Channel metadata remains accessible through each sub-dataset, so downstream models
 can map component names consistently across physics domains.
