@@ -146,6 +146,9 @@ class TrajectoryDataset(Dataset):
         }
         self._channel_norm_tensors: Dict[str, torch.Tensor] = {}
         self._channel_norm_masks: Dict[str, torch.Tensor] = {}
+        self._temporal_field: Optional[FieldInfo] = next(
+            (info for info in self.field_infos if info.has_time), None
+        )
 
         if self._use_normalization:
             stats_path = self.root / "stats.yaml"
@@ -185,11 +188,11 @@ class TrajectoryDataset(Dataset):
                     if self.max_trajectories is not None
                     else n_traj
                 )
-                time_len = self._infer_time_length(data, primary)
+                time_axis = self._load_time_axis(handle, self.field_infos)
+                time_len = len(time_axis)
                 if time_len <= 0:
                     raise ValueError(f"File '{file_path}' does not contain temporal samples.")
 
-                time_axis = self._load_time_axis(handle, self.field_infos)
                 time_indices = self._compute_time_indices(time_len)
                 if time_indices.size == 0:
                     raise ValueError(
@@ -383,10 +386,10 @@ class TrajectoryDataset(Dataset):
         field_infos: Sequence[FieldInfo],
     ) -> np.ndarray:
         primary = next((info for info in field_infos if info.has_time), None)
-        if primary is None:
-            return np.zeros(1, dtype=np.float32)
         if "dimensions" in handle and "time" in handle["dimensions"]:
             return np.asarray(handle["dimensions"]["time"][()], dtype=np.float32)
+        if primary is None:
+            return np.zeros(1, dtype=np.float32)
         dataset = handle[primary.path]
         return np.arange(dataset.shape[1], dtype=np.float32)
 
