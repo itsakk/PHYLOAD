@@ -6,7 +6,7 @@ import itertools
 import random
 from bisect import bisect_right
 from collections import defaultdict, deque
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -291,10 +291,14 @@ class HomogeneousCombinedLoader(CombinedLoader):
         *,
         sync_dataset_per_step: bool = False,
         seed: int = 0,
+        label: Optional[str] = None,
     ) -> None:
         super().__init__(loaders, shuffle)
         self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
         self.total_batches = sum(self.lengths.values())
+        lengths_str = ", ".join(f"{alias}: {count}" for alias, count in self.lengths.items())
+        prefix = f"{label} " if label else ""
+        print(f"[HomogeneousCombinedLoader] {prefix}batches per dataset -> {lengths_str} | total: {self.total_batches}")
 
         # --- minimal additions ---
         self.sync_dataset_per_step = bool(sync_dataset_per_step)

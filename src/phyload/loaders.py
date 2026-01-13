@@ -155,6 +155,7 @@ def _build_homogeneous_loaders(
             loaders,
             shuffle=shuffle_flag,
             **combined_loader_kwargs,
+            label=["train", "val", "test"][index] if index < 3 else None,
         )
 
     train_loader = _gather(0, bool(config_mapping.get("shuffle_train", True)))
