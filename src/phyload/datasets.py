@@ -68,11 +68,13 @@ class TrajectoryDataset(Dataset):
         return_bc: bool = False,
         return_params: bool = True,
         dtype: torch.dtype = torch.float32,
+        dataset_name: str = None,
     ) -> None:
         super().__init__()
         self.root = Path(root)
         if not self.root.exists():
             raise FileNotFoundError(f"Dataset root '{self.root}' does not exist.")
+        self.alias = dataset_name
 
         split_key = split.lower()
         if split_key not in self.SPLIT_DIR:
@@ -283,8 +285,12 @@ class TrajectoryDataset(Dataset):
         if self.return_bc:
             bc = self._collect_boundary_conditions(handle, file_id, traj_idx)
             sample["bc"] = bc
-
-        return sample
+        
+        if isinstance(sample, Mapping):
+            sample = dict(sample)
+            sample.setdefault("dataset", self.alias)
+            return sample
+        return sample, self.alias
 
     def collate_fn(self, batch: Sequence[Dict[str, object]]) -> Dict[str, object]:
         collated = default_collate(batch)
@@ -820,7 +826,7 @@ def init_datasets(
         cfg["use_normalization"] = bool(cfg["use_normalization"])
 
     root = Path(cfg.pop("root"))
-    dataset_name = cfg.pop("dataset_name", None)
+    dataset_name = cfg.get("dataset_name", None)
     if dataset_name is not None:
         root = root / str(dataset_name)
     splits = tuple(cfg.pop("splits", ("train", "val", "test")))

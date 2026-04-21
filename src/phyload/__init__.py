@@ -2,12 +2,14 @@
 
 from .datasets import FieldInfo, TrajectoryDataset, init_datasets
 from .loaders import init_dataloaders
-from .multi import MultiDatasetCollection
+from .multi import MultiDatasetCollection, ConcatenatedTrajectoryDataset, PaddedTrajectoryDataset
 
 __all__ = [
     "FieldInfo",
     "TrajectoryDataset",
     "MultiDatasetCollection",
+    "ConcatenatedTrajectoryDataset",
+    "PaddedTrajectoryDataset",
     "init_datasets",
     "init_dataloaders",
 ]
