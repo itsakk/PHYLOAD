@@ -487,11 +487,8 @@ class TrajectoryDataset(Dataset):
         return params
     
     def _normalize_parameters(self, params: Dict[str, object]) -> Dict[str, object]:
-        def _normalize_param(param, min=0, max=1, log_scale=False, eps=1e-9):
+        def _normalize_param(param, min=0, max=1, log_scale=False):
             if log_scale:
-                if min == 0:
-                    min = eps
-                    param = torch.clip(param, eps)
                 return torch.log(param / min) / torch.log(torch.Tensor([max / min]))
             return (param-min) / (max-min)
         
