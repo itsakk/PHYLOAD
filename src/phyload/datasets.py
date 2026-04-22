@@ -496,7 +496,6 @@ class TrajectoryDataset(Dataset):
         norms = DATASET_PARAMETERS_NORMS.get(self.dataset_name, dict())
         for param_name, norm in norms.items():
             normalized_params[param_name] = _normalize_param(params[param_name], **norm)
-            print(f"{param_name}: {params[param_name]:.2f} → {normalized_params[param_name].item():.2f}")
 
         return normalized_params
 
@@ -907,7 +906,7 @@ DATASET_PARAMETERS_NORMS = dict(
         F=dict(min=0.014, max=0.098, log_scale=True),
         k=dict(min=0.051, max=0.065)
     ),
-    helmoltz_staircase=dict(
+    helmholtz_staircase=dict(
         omega=dict(min=0.06, max=2.51)
     ),
     MHD_64=dict(
