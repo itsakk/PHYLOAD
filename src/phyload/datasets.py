@@ -32,7 +32,8 @@ class FieldInfo:
     name: str
     components: int
     spatial_shape: Tuple[int, ...]
-    has_time: bool
+    sample_varying: bool
+    time_varying: bool
     dtype: np.dtype
 
 
@@ -179,7 +180,7 @@ class TrajectoryDataset(Dataset):
 
         for file_idx, file_path in enumerate(self.files):
             with h5py.File(file_path, "r") as handle:
-                primary = self.field_infos[0]
+                primary = primary = next((info for info in self.field_infos if info.time_varying), None)
                 data = handle[primary.path]
                 n_traj = data.shape[0]
                 selected_traj = (
@@ -355,10 +356,9 @@ class TrajectoryDataset(Dataset):
         n_spatial_dims: int,
     ) -> FieldInfo:
         shape = dataset.shape
-        if len(shape) < 1 + n_spatial_dims:
-            raise ValueError(f"Dataset '{group}/{name}' has incompatible shape {shape}.")
-        has_time = len(shape) >= 2 + n_spatial_dims
-        spatial_start = 1 if not has_time else 2
+        time_varying = dataset.attrs["time_varying"]
+        sample_varying = dataset.attrs["sample_varying"]
+        spatial_start = int(sample_varying) + int(time_varying)
         spatial_shape = tuple(int(dim) for dim in shape[spatial_start : spatial_start + n_spatial_dims])
         remainder = shape[spatial_start + n_spatial_dims :]
         components = int(np.prod(remainder)) if remainder else 1
@@ -367,7 +367,8 @@ class TrajectoryDataset(Dataset):
             name=name,
             components=components,
             spatial_shape=spatial_shape,
-            has_time=has_time,
+            sample_varying=sample_varying,
+            time_varying=time_varying,
             dtype=dataset.dtype,
         )
 
@@ -388,7 +389,7 @@ class TrajectoryDataset(Dataset):
         handle: h5py.File,
         field_infos: Sequence[FieldInfo],
     ) -> np.ndarray:
-        primary = next((info for info in field_infos if info.has_time), None)
+        primary = next((info for info in field_infos if info.time_varying), None)
         if primary is None:
             return np.zeros(1, dtype=np.float32)
         if "dimensions" in handle and "time" in handle["dimensions"]:
@@ -420,18 +421,20 @@ class TrajectoryDataset(Dataset):
         num_frames: int,
     ) -> np.ndarray:
         selection: List[Union[int, slice, List[int]]] = [traj_idx]
-        if info.has_time:
+        if info.time_varying:
             selection.append(time_selector)
         spatial_slices = self._spatial_slices if self._spatial_slices else ()
         selection.extend(spatial_slices)
         remainder = dataset.ndim - len(selection)
         if remainder > 0:
             selection.extend([slice(None)] * remainder)
+        if not info.sample_varying:
+            del selection[0]
         array = dataset[tuple(selection)]
         arr_np = np.asarray(array)
         if arr_np.dtype != np.float32:
             arr_np = arr_np.astype(np.float32, copy=False)
-        if not info.has_time:
+        if not info.time_varying:
             arr_np = np.repeat(arr_np[np.newaxis, ...], num_frames, axis=0)
         return np.ascontiguousarray(arr_np)
 
@@ -743,7 +746,7 @@ class TrajectoryDataset(Dataset):
 
     @staticmethod
     def _infer_time_length(dataset: h5py.Dataset, info: FieldInfo) -> int:
-        return dataset.shape[1] if info.has_time else 1
+        return dataset.shape[1] if info.time_varying else 1
 
     @staticmethod
     def _load_stats_file(path: Path) -> Dict[str, Dict[str, np.ndarray]]:
