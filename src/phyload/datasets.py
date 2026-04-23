@@ -283,7 +283,6 @@ class TrajectoryDataset(Dataset):
 
         if self.return_params:
             params = self._collect_parameters(handle, file_id, traj_idx)
-            params = self._normalize_parameters(params)
             sample["params"] = params
 
         if self.return_bc:
@@ -485,19 +484,6 @@ class TrajectoryDataset(Dataset):
             else:
                 params[name] = self._format_param_value(arr)
         return params
-    
-    def _normalize_parameters(self, params: Dict[str, object]) -> Dict[str, object]:
-        def _normalize_param(param, min=0, max=1, log_scale=False):
-            if log_scale:
-                return torch.log(param / min) / torch.log(torch.Tensor([max / min]))
-            return (param-min) / (max-min)
-        
-        normalized_params = dict()
-        norms = DATASET_PARAMETERS_NORMS.get(self.dataset_name, dict())
-        for param_name, norm in norms.items():
-            normalized_params[param_name] = _normalize_param(params[param_name], **norm)
-
-        return normalized_params
 
     def _format_param_value(self, value: object) -> object:
         if isinstance(value, np.ndarray):
@@ -889,54 +875,3 @@ def init_datasets(
             f"No datasets could be initialised from '{root}' with splits {splits}."
         )
     return datasets
-
-
-DATASET_PARAMETERS_NORMS = dict(
-    active_matter=dict(
-        alpha=dict(min=-5, max=-1),
-        zeta=dict(min=1, max=17),
-    ),
-    euler_multi_quadrants_openBC=dict(
-        gamma=dict(min=1.13, max=1.76),
-    ),
-    euler_multi_quadrants_periodicBC=dict(
-        gamma=dict(min=1.13, max=1.76),
-    ),
-    gray_scott_reaction_diffusion=dict(
-        F=dict(min=0.014, max=0.098, log_scale=True),
-        k=dict(min=0.051, max=0.065)
-    ),
-    helmholtz_staircase=dict(
-        omega=dict(min=0.06, max=2.51)
-    ),
-    MHD_64=dict(
-        Ms=dict(min=0.5, max=7.0, log_scale=True),
-        Ma=dict(min=0.7, max=2.0)
-    ),
-    MHD_128=dict(
-        Ms=dict(min=0.5, max=7.0, log_scale=True),
-        Ma=dict(min=0.7, max=2.0)
-    ),
-    rayleigh_benard=dict(
-        Rayleigh=dict(min=1000000, max=10000000000, log_scale=True),
-        Prandtl=dict(min=0.1, max=10.0, log_scale=True),
-    ),
-    rayleigh_taylor_instability=dict(
-        At=dict(min=1/16, max=3/4, log_scale=True),
-    ),
-    shear_flow=dict(
-        Reynolds=dict(min=10000, max=500000, log_scale=True),
-        Schmidt=dict(min=0.1, max=10.0, log_scale=True),
-    ),
-    turbulence_gravity_cooling=dict(
-        T0=dict(min=10, max=1000, log_scale=True),
-        Z=dict(min=0, max=1),
-        rho0=dict(min=0.445, max=44.5, log_scale=True),
-    ),
-    turbulent_radiative_layer_2D=dict(
-        tcool=dict(min=0.03, max=3.16, log_scale=True),
-    ),
-    turbulent_radiative_layer_3D=dict(
-        tcool=dict(min=0.03, max=3.16, log_scale=True),
-    ),
-)
