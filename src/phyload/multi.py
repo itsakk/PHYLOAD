@@ -218,7 +218,8 @@ class MultiDatasetCollection(Mapping[str, Dataset]):
     ) -> None:
         mode = mode.lower()
         if mode not in ["mixed"] + list(COMBINED_LOADERS.keys()):
-            raise ValueError(f"mode must be one of '{'\', \''.join(["mixed"] + list(COMBINED_LOADERS.keys()))}', not '{mode}'")
+            valid = "', '".join(["mixed"] + list(COMBINED_LOADERS.keys()))
+            raise ValueError(f"mode must be one of '{valid}', not '{mode}'")
         self.mode = mode
         self.pad_value = float(pad_value)
         self._alias_map = {
@@ -278,10 +279,12 @@ class HomogeneousCombinedLoader(CombinedLoader):
     def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
         super().__init__(loaders, shuffle)
         self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
-        # if self.shuffle:
-        #     for key, val in self.lengths.items():
-        #         print(f"{key}: {val}")
         self.total_batches = sum(self.lengths.values())
+        self._epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        super().set_epoch(epoch)
+        self._epoch = epoch
 
     def __len__(self):
         return self.total_batches
@@ -290,11 +293,16 @@ class HomogeneousCombinedLoader(CombinedLoader):
         entries = {alias: iter(loader) for alias, loader in self.loaders.items()}
         remaining = self.lengths.copy()
 
+        # Use a private RNG seeded by epoch so every rank generates the identical
+        # dataset-alias sequence. Each rank still gets different *samples* within
+        # the chosen dataset because DistributedSampler shards the inner DataLoader.
+        rng = random.Random(self._epoch)
+
         while remaining:
             # Sample loader alias proportionally to remaining batch counts
             aliases = list(remaining.keys())
             weights = [remaining[a] for a in aliases]
-            alias = random.choices(aliases, weights)[0]
+            alias = rng.choices(aliases, weights)[0]
 
             try:
                 batch = next(entries[alias])
