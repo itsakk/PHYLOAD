@@ -180,15 +180,15 @@ class TrajectoryDataset(Dataset):
         self._time_axes: Dict[int, np.ndarray] = {}
         self._time_indices: Dict[int, np.ndarray] = {}
 
+        max_trajectories = self.max_trajectories if self.max_trajectories is not None else math.inf
+
         for file_idx, file_path in enumerate(self.files):
             with h5py.File(file_path, "r") as handle:
                 primary = primary = next((info for info in self.field_infos if info.time_varying), None)
                 data = handle[primary.path]
                 n_traj = data.shape[0]
                 selected_traj = (
-                    min(n_traj, self.max_trajectories)
-                    if self.max_trajectories is not None
-                    else n_traj
+                    min(n_traj, max_trajectories)
                 )
                 time_len = self._infer_time_length(data, primary)
                 if time_len <= 0:
@@ -220,9 +220,14 @@ class TrajectoryDataset(Dataset):
                     for traj_idx in range(selected_traj):
                         for start in range(0, limit + 1, stride):
                             self.index.append((file_idx, traj_idx, start))
+                max_trajectories -= selected_traj
+                if max_trajectories <= 0:
+                    break
 
         if not self.index:
             raise RuntimeError(f"Dataset '{self.root}' produced an empty index.")
+
+        print(f"{self.alias}: {len(self)}")
 
     # ------------------------------------------------------------------
     # Dataset protocol
