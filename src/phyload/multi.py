@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import copy
 import itertools
-import random
 from bisect import bisect_right
-from collections import defaultdict, deque
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from collections import defaultdict
+from typing import Any, Dict, Iterator, Mapping, Sequence, Tuple, Optional
+
+from torch.utils.data.distributed import DistributedSampler
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 __all__ = [
@@ -255,20 +255,87 @@ class MultiDatasetCollection(Mapping[str, Dataset]):
 
 
 class CombinedLoader:
-    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
+    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True, seed: int = 42) -> None:
         self.loaders = {alias: loader for alias, loader in loaders.items() if loader is not None}
+        self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
         self.shuffle = bool(shuffle)
+        self.seed = seed
+        for loader in self.loaders.values():
+            loader.shuffle = self.shuffle
         if not self.loaders:
             raise ValueError("At least one loader is required for CombinedLoader.")
+        self.epoch = 0
 
-    def set_epoch(self, epoch: int) -> None:
+    # def set_epoch(self, epoch: int) -> None:
+    #     for loader in self.loaders.values():
+    #         sampler = getattr(loader, "sampler", None)
+    #         if sampler is not None and hasattr(sampler, "set_epoch"):
+    #             sampler.set_epoch(epoch)
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
         for loader in self.loaders.values():
-            sampler = getattr(loader, "sampler", None)
-            if sampler is not None and hasattr(sampler, "set_epoch"):
-                sampler.set_epoch(epoch)
+            if isinstance(loader.sampler, DistributedSampler):
+                loader.sampler.set_epoch(epoch)
+            # Also handle samplers wrapped in a BatchSampler
+            elif hasattr(loader.sampler, "sampler") and isinstance(loader.sampler.sampler, DistributedSampler):
+                loader.sampler.sampler.set_epoch(epoch)
 
 
 class HomogeneousCombinedLoader(CombinedLoader):
+    """
+    Combines multiple dataloaders with homogeneous random sampling.
+
+    Epoch definition (controlled by `mode`):
+      - "fixed":   epoch = `steps_per_epoch` steps (you set this).
+      - "largest": epoch = len(largest dataloader) steps; smaller ones cycle.
+
+    DDP safety: the dataloader-selection RNG is seeded deterministically
+    from (epoch, step), so all ranks make the same choice every step.
+    Each sub-dataloader's DistributedSampler still shards data per rank.
+    """
+
+    def __init__(
+        self,
+        loaders: Mapping[str, torch.utils.data.DataLoader],
+        steps_per_epoch: Optional[int] = None,  # required if mode="fixed"
+        shuffle: bool = True,
+        seed: int = 42,
+    ):
+        super().__init__(loaders, shuffle, seed)
+        if not self.shuffle:
+            self.steps_per_epoch = sum(self.lengths.values())
+        else:
+            self.steps_per_epoch = steps_per_epoch or max(self.lengths.values()) * len(self.lengths)
+
+    def __len__(self) -> int:
+        return self.steps_per_epoch
+
+    def _cycling_iter(self, alias: str) -> Iterator:
+        """Cycles over a dataloader by re-creating the iterator, avoiding memory accumulation."""
+        while True:
+            for batch in self.loaders[alias]:
+                yield annotate_batch(batch, alias)
+
+    def __iter__(self) -> Iterator:
+        if not self.shuffle:
+            for alias, loader in self.loaders.items():
+                for batch in loader:
+                    yield annotate_batch(batch, alias)
+            return
+        
+        iterators = {alias: self._cycling_iter(alias) for alias in self.loaders}
+        aliases = list(self.loaders.keys())
+        n = len(aliases)
+
+        for step in range(self.steps_per_epoch):
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch * 100_000 + step)
+            idx = torch.randint(n, (1,), generator=g).item()
+            alias = aliases[idx]
+            yield annotate_batch(next(iterators[alias]), alias)
+
+
+class UniformCombinedLoader(CombinedLoader):
     """loads each chunk from each dataset uniformly through a weighted probability depending on the number of chunks in each dataset
 
     Args:
@@ -276,33 +343,33 @@ class HomogeneousCombinedLoader(CombinedLoader):
         shuffle (bool, optional): if the samples should be shuffled (is irrelevant, doesn't have a deterministic behaviour implemented yet). Defaults to True.
     """
 
-    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True) -> None:
-        super().__init__(loaders, shuffle)
+    def __init__(self, loaders: Mapping[str, torch.utils.data.DataLoader], shuffle: bool = True, seed: int = 42) -> None:
+        super().__init__(loaders, shuffle, seed)
         self.lengths = {alias: len(loader) for alias, loader in self.loaders.items()}
-        self.total_batches = sum(self.lengths.values())
-        self._epoch = 0
-
-    def set_epoch(self, epoch: int) -> None:
-        super().set_epoch(epoch)
-        self._epoch = epoch
 
     def __len__(self):
-        return self.total_batches
+        return sum(self.lengths.values())
 
     def __iter__(self):
+        if not self.shuffle:
+            for alias, loader in self.loaders.items():
+                for batch in loader:
+                    yield annotate_batch(batch, alias)
+            return
+        
         entries = {alias: iter(loader) for alias, loader in self.loaders.items()}
         remaining = self.lengths.copy()
 
-        # Use a private RNG seeded by epoch so every rank generates the identical
-        # dataset-alias sequence. Each rank still gets different *samples* within
-        # the chosen dataset because DistributedSampler shards the inner DataLoader.
-        rng = random.Random(self._epoch)
-
+        step = 0
         while remaining:
             # Sample loader alias proportionally to remaining batch counts
             aliases = list(remaining.keys())
             weights = [remaining[a] for a in aliases]
-            alias = rng.choices(aliases, weights)[0]
+            weights_tensor = torch.tensor(weights, dtype=torch.float)
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch * 100_000 + step)
+            idx = torch.multinomial(weights_tensor, num_samples=1, generator=g).item()
+            alias = aliases[idx]
 
             try:
                 batch = next(entries[alias])
@@ -315,6 +382,7 @@ class HomogeneousCombinedLoader(CombinedLoader):
             remaining[alias] -= 1
             if remaining[alias] == 0:
                 del remaining[alias]
+            step += 1
 
             yield annotate_batch(batch, alias)
 
@@ -329,4 +397,5 @@ def annotate_batch(batch, alias: str):
 
 COMBINED_LOADERS = dict(
     homogeneous=HomogeneousCombinedLoader,
+    uniform=UniformCombinedLoader,
 )
