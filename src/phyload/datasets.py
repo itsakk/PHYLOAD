@@ -71,6 +71,7 @@ class TrajectoryDataset(Dataset):
         return_params: bool = True,
         dtype: torch.dtype = torch.float32,
         dataset_name: str = None,
+        handle_refresh_interval: Optional[int] = 2000,
     ) -> None:
         super().__init__()
         self.root = Path(root)
@@ -176,6 +177,15 @@ class TrajectoryDataset(Dataset):
 
         self.index: MutableSequence[Tuple[int, int, int]] = []
         self._handle_cache: Dict[int, h5py.File] = {}
+        # Handles are cached per file_id for the lifetime of the worker process.
+        # With DataLoader persistent_workers=True that lifetime is now the whole
+        # job instead of one epoch, so HDF5's internal caches tied to a long-open
+        # file accumulate for the full run. Force a close+reopen every N accesses
+        # to bound that growth without giving up the persistent worker pool.
+        self._handle_refresh_interval = (
+            int(handle_refresh_interval) if handle_refresh_interval else None
+        )
+        self._handle_access_count: Dict[int, int] = {}
         self._trajectory_counts: Dict[int, int] = {}
         self._time_axes: Dict[int, np.ndarray] = {}
         self._time_indices: Dict[int, np.ndarray] = {}
@@ -711,10 +721,21 @@ class TrajectoryDataset(Dataset):
 
     def _get_handle(self, file_id: int) -> h5py.File:
         handle = self._handle_cache.get(file_id)
+        if handle is not None and handle.id and self._handle_refresh_interval:
+            count = self._handle_access_count.get(file_id, 0) + 1
+            if count >= self._handle_refresh_interval:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+                handle = None
+                count = 0
+            self._handle_access_count[file_id] = count
         if handle is None or not handle.id:
             path = self.files[file_id]
             handle = h5py.File(path, "r", swmr=True)
             self._handle_cache[file_id] = handle
+            self._handle_access_count[file_id] = 0
         return handle
 
     def close(self) -> None:
@@ -724,15 +745,18 @@ class TrajectoryDataset(Dataset):
             except Exception:
                 pass
         self._handle_cache.clear()
+        self._handle_access_count.clear()
 
     def __getstate__(self):  # pragma: no cover
         state = dict(self.__dict__)
         state["_handle_cache"] = {}
+        state["_handle_access_count"] = {}
         return state
 
     def __setstate__(self, state):  # pragma: no cover
         self.__dict__.update(state)
         self._handle_cache = {}
+        self._handle_access_count = {}
 
     def __del__(self):  # pragma: no cover
         try:
