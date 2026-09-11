@@ -76,17 +76,31 @@ def init_dataloaders(
     shuffle_test = bool(cfg.pop("shuffle_test", False))
 
     num_workers = int(cfg.pop("num_workers", 0))
+    val_num_workers = int(cfg.pop("val_num_workers", num_workers))
+    test_num_workers = int(cfg.pop("test_num_workers", num_workers))
     pin_memory = bool(cfg.pop("pin_memory", torch.cuda.is_available()))
     drop_last = bool(cfg.pop("drop_last", False))
     persistent_workers = bool(cfg.pop("persistent_workers", num_workers > 0))
+    val_persistent_workers = bool(cfg.pop("val_persistent_workers", persistent_workers))
+    test_persistent_workers = bool(cfg.pop("test_persistent_workers", persistent_workers))
     prefetch_factor = cfg.pop("prefetch_factor", 4 if num_workers > 0 else None)
+    val_prefetch_factor = cfg.pop("val_prefetch_factor", prefetch_factor)
+    test_prefetch_factor = cfg.pop("test_prefetch_factor", prefetch_factor)
     worker_init_fn = cfg.pop("worker_init_fn", None)
     collate_fn = cfg.pop("collate_fn", None)
 
     multi_gpu = bool(cfg.pop("multi_gpu", False))
     loader_kwargs = {k: v for k, v in cfg.items() if v is not None}
 
-    def _build(dataset: Optional[Dataset], *, batch: int, shuffle: bool) -> Optional[DataLoader]:
+    def _build(
+        dataset: Optional[Dataset],
+        *,
+        batch: int,
+        shuffle: bool,
+        workers: int,
+        persistent: bool,
+        prefetch: object,
+    ) -> Optional[DataLoader]:
         if dataset is None:
             return None
         sampler = None
@@ -100,13 +114,13 @@ def init_dataloaders(
             batch_size=batch,
             shuffle=shuffle_flag,
             sampler=sampler,
-            num_workers=num_workers,
+            num_workers=workers,
             pin_memory=pin_memory,
             drop_last=drop_last,
-            persistent_workers=persistent_workers if num_workers > 0 else False,
+            persistent_workers=persistent if workers > 0 else False,
         )
-        if num_workers > 0 and prefetch_factor is not None:
-            loader_args["prefetch_factor"] = int(prefetch_factor)
+        if workers > 0 and prefetch is not None:
+            loader_args["prefetch_factor"] = int(prefetch)
         if collate_fn is not None:
             loader_args["collate_fn"] = collate_fn
         elif hasattr(dataset, "collate_fn"):
@@ -118,9 +132,30 @@ def init_dataloaders(
         loader_args.update(loader_kwargs)
         return DataLoader(dataset, **loader_args)
 
-    train_loader = _build(train_dataset, batch=batch_size, shuffle=shuffle_train)
-    val_loader = _build(val_dataset, batch=val_batch_size, shuffle=shuffle_val)
-    test_loader = _build(test_dataset, batch=test_batch_size, shuffle=shuffle_test)
+    train_loader = _build(
+        train_dataset,
+        batch=batch_size,
+        shuffle=shuffle_train,
+        workers=num_workers,
+        persistent=persistent_workers,
+        prefetch=prefetch_factor,
+    )
+    val_loader = _build(
+        val_dataset,
+        batch=val_batch_size,
+        shuffle=shuffle_val,
+        workers=val_num_workers,
+        persistent=val_persistent_workers,
+        prefetch=val_prefetch_factor,
+    )
+    test_loader = _build(
+        test_dataset,
+        batch=test_batch_size,
+        shuffle=shuffle_test,
+        workers=test_num_workers,
+        persistent=test_persistent_workers,
+        prefetch=test_prefetch_factor,
+    )
     return train_loader, val_loader, test_loader
 
 def _build_homogeneous_loaders(

@@ -319,7 +319,7 @@ class HomogeneousCombinedLoader(CombinedLoader):
     def __iter__(self) -> Iterator:
         if not self.shuffle:
             for alias, loader in self.loaders.items():
-                for batch in loader:
+                for batch in _iter_loader_batches(loader):
                     yield annotate_batch(batch, alias)
             return
         
@@ -393,6 +393,18 @@ def annotate_batch(batch, alias: str):
         annotated.setdefault("dataset", alias)
         return annotated
     return batch, alias
+
+
+def _iter_loader_batches(loader: torch.utils.data.DataLoader) -> Iterator:
+    """Iterate a loader and explicitly stop its workers when iteration ends."""
+    loader_iterator = iter(loader)
+    try:
+        yield from loader_iterator
+    finally:
+        shutdown_workers = getattr(loader_iterator, "_shutdown_workers", None)
+        if shutdown_workers is not None:
+            shutdown_workers()
+        del loader_iterator
 
 
 COMBINED_LOADERS = dict(
